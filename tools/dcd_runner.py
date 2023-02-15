@@ -224,8 +224,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
         if train_writer is not None:
             train_writer.add_scalar("Loss/Epoch/Sparse", losses.avg(0), epoch)
             train_writer.add_scalar("Loss/Epoch/Dense", losses.avg(1), epoch)
-            train_writer.add_scalar("Loss/Epoch/SparseDCD", test_losses.avg(2), epoch)
-            train_writer.add_scalar("Loss/Epoch/DenseDCD", test_losses.avg(3), epoch)
+            train_writer.add_scalar("Loss/Epoch/SparseDCD", losses.avg(2), epoch)
+            train_writer.add_scalar("Loss/Epoch/DenseDCD", losses.avg(3), epoch)
         print_log(
             "[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s"
             % (
