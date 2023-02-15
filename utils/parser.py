@@ -46,9 +46,14 @@ def get_args():
         default=None,
         help="difficulty mode for shapenet",
     )
+    # KNN
     parser.add_argument("--knn", action="store_true", default=False, help="Use KNNLoss/Patch Variance")
     parser.add_argument("--knn_k", type=int, default=10, help="K value for KNNLoss/Patch Variance")
     parser.add_argument("--knn_seeds", type=int, default=200, help="Seeds for KNNLoss/Patch Variance")
+    
+    # Density-Aware-Chamfer-Distance
+    parser.add_argument("--dcd", action="store_true", default=False, help="Use Density-Aware-Chamfer-Distance Loss Function")
+    
     args = parser.parse_args()
 
     if args.test and args.resume:
@@ -59,6 +64,9 @@ def get_args():
 
     if args.test and args.ckpts is None:
         raise ValueError("ckpts shouldnt be None while test mode")
+    
+    if args.knn and args.dcd:
+        raise ValueError("--knn and --dcd cannot be both used")
 
     if "LOCAL_RANK" not in os.environ:
         os.environ["LOCAL_RANK"] = str(args.local_rank)

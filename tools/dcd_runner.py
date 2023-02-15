@@ -5,11 +5,11 @@ import json
 from tools import builder
 from utils import misc, dist_utils
 import time
-from tools.loss import kNNLoss
 from utils.logger import *
 from utils.AverageMeter import AverageMeter
 from utils.metrics import Metrics
 from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
+from extensions.dcd import DCD
 
 
 def run_net(args, config, train_writer=None, val_writer=None):
@@ -75,7 +75,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
     # Criterion
     ChamferDisL1 = ChamferDistanceL1()
     ChamferDisL2 = ChamferDistanceL2()
-    knn_loss = kNNLoss(k=args.knn_k, n_seeds=args.knn_seeds)
+    DCDist = DCD()
 
     if args.resume:
         builder.resume_optimizer(optimizer, args, logger=logger)
@@ -95,9 +95,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         batch_start_time = time.time()
         batch_time = AverageMeter()
         data_time = AverageMeter()
-        losses = AverageMeter(
-            ["SparseLoss", "DenseLoss", "SparseKNNLoss", "DenseKNNLoss"]
-        )
+        losses = AverageMeter(["SparseLoss", "DenseLoss", "SparseDCDLoss", "DenseDCDLoss"])
 
         num_iter = 0
 
@@ -139,11 +137,12 @@ def run_net(args, config, train_writer=None, val_writer=None):
             ret = base_model(partial)
 
             sparse_loss, dense_loss = base_model.module.get_loss(ret, gt, epoch)
+            
+            sparsedcd_loss = DCD(ret[0], gt)
+            densedcd_loss = DCD(ret[1], gt)
 
-            sparsekloss = knn_loss(ret[0])
-            densekloss = knn_loss(ret[1])
-
-            _loss = sparse_loss + dense_loss + densekloss * 0.2 + sparsekloss * 0.1
+            # _loss = sparse_loss + dense_loss
+            _loss = dcdsparse_loss + dcddense_loss
             _loss.backward()
 
             # forward
@@ -160,23 +159,9 @@ def run_net(args, config, train_writer=None, val_writer=None):
             if args.distributed:
                 sparse_loss = dist_utils.reduce_tensor(sparse_loss, args)
                 dense_loss = dist_utils.reduce_tensor(dense_loss, args)
-                losses.update(
-                    [
-                        sparse_loss.item() * 1000,
-                        dense_loss.item() * 1000,
-                        sparsekloss.item() * 1000,
-                        densekloss.item() * 1000,
-                    ]
-                )
+                losses.update([sparse_loss.item() * 1000, dense_loss.item() * 1000, sparsedcd_loss.item() * 1000, densedcd_loss.item() * 1000])
             else:
-                losses.update(
-                    [
-                        sparse_loss.item() * 1000,
-                        dense_loss.item() * 1000,
-                        sparsekloss.item() * 1000,
-                        densekloss.item() * 1000,
-                    ]
-                )
+                losses.update([sparse_loss.item() * 1000, dense_loss.item() * 1000, sparsedcd_loss.item() * 1000, densedcd_loss.item() * 1000])
 
             if args.distributed:
                 torch.cuda.synchronize()
@@ -188,12 +173,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 )
                 train_writer.add_scalar(
                     "Loss/Batch/Dense", dense_loss.item() * 1000, n_itr
-                )
-                train_writer.add_scalar(
-                    "Loss/Batch/SparseKLoss", sparsekloss.item() * 1000, n_itr
-                )
-                train_writer.add_scalar(
-                    "Loss/Batch/DenseKLoss", densekloss.item() * 1000, n_itr
                 )
 
             batch_time.update(time.time() - batch_start_time)
@@ -229,8 +208,8 @@ def run_net(args, config, train_writer=None, val_writer=None):
         if train_writer is not None:
             train_writer.add_scalar("Loss/Epoch/Sparse", losses.avg(0), epoch)
             train_writer.add_scalar("Loss/Epoch/Dense", losses.avg(1), epoch)
-            train_writer.add_scalar("Loss/Epoch/SparseKLoss", losses.avg(2), epoch)
-            train_writer.add_scalar("Loss/Epoch/DenseKLoss", losses.avg(3), epoch)
+            train_writer.add_scalar("Loss/Epoch/SparseDCD", test_losses.avg(2), epoch)
+            train_writer.add_scalar("Loss/Epoch/DenseDCD", test_losses.avg(3), epoch)
         print_log(
             "[Training] EPOCH: %d EpochTime = %.3f (s) Losses = %s"
             % (
@@ -249,7 +228,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
                 epoch,
                 ChamferDisL1,
                 ChamferDisL2,
-                knn_loss,
                 val_writer,
                 args,
                 config,
@@ -279,8 +257,17 @@ def run_net(args, config, train_writer=None, val_writer=None):
             args,
             logger=logger,
         )
-        # if (config.max_epoch - epoch) < 2:
-        #     builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args, logger = logger)
+        if (config.max_epoch - epoch) < 2:
+            builder.save_checkpoint(
+                base_model,
+                optimizer,
+                epoch,
+                metrics,
+                best_metrics,
+                f"ckpt-epoch-{epoch:03d}",
+                args,
+                logger=logger,
+            )
     if train_writer is not None and val_writer is not None:
         train_writer.close()
         val_writer.close()
@@ -292,7 +279,6 @@ def validate(
     epoch,
     ChamferDisL1,
     ChamferDisL2,
-    knn_loss,
     val_writer,
     args,
     config,
@@ -302,14 +288,7 @@ def validate(
     base_model.eval()  # set model to eval mode
 
     test_losses = AverageMeter(
-        [
-            "SparseLossL1",
-            "SparseLossL2",
-            "DenseLossL1",
-            "DenseLossL2",
-            "SparseKNNLoss",
-            "DenseKNNLoss",
-        ]
+        ["SparseLossL1", "SparseLossL2", "DenseLossL1", "DenseLossL2", "SparseDCDLoss", "DenseDCDLoss"]
     )
     test_metrics = AverageMeter(Metrics.names())
     category_metrics = dict()
@@ -355,16 +334,17 @@ def validate(
             sparse_loss_l2 = ChamferDisL2(coarse_points, gt)
             dense_loss_l1 = ChamferDisL1(dense_points, gt)
             dense_loss_l2 = ChamferDisL2(dense_points, gt)
-            sparsekloss = knn_loss(coarse_points)
-            densekloss = knn_loss(dense_points)
+
+            sparsedcd_loss = DCD(ret[0], gt)
+            densedcd_loss = DCD(ret[1], gt)
 
             if args.distributed:
                 sparse_loss_l1 = dist_utils.reduce_tensor(sparse_loss_l1, args)
                 sparse_loss_l2 = dist_utils.reduce_tensor(sparse_loss_l2, args)
                 dense_loss_l1 = dist_utils.reduce_tensor(dense_loss_l1, args)
                 dense_loss_l2 = dist_utils.reduce_tensor(dense_loss_l2, args)
-                sparsekloss = dist_utils.reduce_tensor(sparsekloss, args)
-                densekloss = dist_utils.reduce_tensor(densekloss, args)
+                sparsedcd_loss = dist_utils.reduce_tensor(sparsedcd_loss, args)
+                densedcd_loss = dist_utils.reduce_tensor(densedcd_loss, args)
 
             test_losses.update(
                 [
@@ -372,8 +352,8 @@ def validate(
                     sparse_loss_l2.item() * 1000,
                     dense_loss_l1.item() * 1000,
                     dense_loss_l2.item() * 1000,
-                    sparsekloss.item() * 1000,
-                    densekloss.item() * 1000,
+                    sparsedcd_loss.item() * 1000,
+                    densedcd_loss.item() * 1000,
                 ]
             )
 
@@ -477,8 +457,8 @@ def validate(
     if val_writer is not None:
         val_writer.add_scalar("Loss/Epoch/Sparse", test_losses.avg(0), epoch)
         val_writer.add_scalar("Loss/Epoch/Dense", test_losses.avg(2), epoch)
-        val_writer.add_scalar("Loss/Epoch/SparseKLoss", test_losses.avg(4), epoch)
-        val_writer.add_scalar("Loss/Epoch/DenseKLoss", test_losses.avg(5), epoch)
+        val_writer.add_scalar("Loss/Epoch/SparseDCD", test_losses.avg(4), epoch)
+        val_writer.add_scalar("Loss/Epoch/DenseDCD", test_losses.avg(5), epoch)
         for i, metric in enumerate(test_metrics.items):
             val_writer.add_scalar("Metric/%s" % metric, test_metrics.avg(i), epoch)
 
@@ -506,14 +486,14 @@ def test_net(args, config):
     # Criterion
     ChamferDisL1 = ChamferDistanceL1()
     ChamferDisL2 = ChamferDistanceL2()
-    knn_loss = kNNLoss(k=args.knn_k, n_seeds=args.knn_seeds)
+    DCDLoss = DCD()
 
     test(
         base_model,
         test_dataloader,
         ChamferDisL1,
         ChamferDisL2,
-        knn_loss,
+        DCDLoss,
         args,
         config,
         logger=logger,
@@ -521,20 +501,13 @@ def test_net(args, config):
 
 
 def test(
-    base_model,
-    test_dataloader,
-    ChamferDisL1,
-    ChamferDisL2,
-    knn_loss,
-    args,
-    config,
-    logger=None,
+    base_model, test_dataloader, ChamferDisL1, ChamferDisL2, DCDLoss, args, config, logger=None
 ):
 
     base_model.eval()  # set model to eval mode
 
     test_losses = AverageMeter(
-        ["SparseLossL1", "SparseLossL2", "DenseLossL1", "DenseLossL2", "SparseKNNLoss", "DenseKNNLoss"]
+        ["SparseLossL1", "SparseLossL2", "DenseLossL1", "DenseLossL2", "SparseDCDLoss", "DenseDCDLoss"]
     )
     test_metrics = AverageMeter(Metrics.names())
     category_metrics = dict()
@@ -563,8 +536,9 @@ def test(
                 sparse_loss_l2 = ChamferDisL2(coarse_points, gt)
                 dense_loss_l1 = ChamferDisL1(dense_points, gt)
                 dense_loss_l2 = ChamferDisL2(dense_points, gt)
-                sparsekloss = knn_loss(coarse_points)
-                densekloss = knn_loss(dense_points)
+                
+                sparsedcd_loss = DCD(ret[0], gt)
+                densedcd_loss = DCD(ret[1], gt)
 
                 test_losses.update(
                     [
@@ -572,8 +546,8 @@ def test(
                         sparse_loss_l2.item() * 1000,
                         dense_loss_l1.item() * 1000,
                         dense_loss_l2.item() * 1000,
-                        sparsekloss.item() * 1000,
-                        densekloss.item() * 1000,
+                        sparsedcd_loss.item() * 1000,
+                        densedcd_loss.item() * 1000,
                     ]
                 )
 
@@ -612,8 +586,9 @@ def test(
                     sparse_loss_l2 = ChamferDisL2(coarse_points, gt)
                     dense_loss_l1 = ChamferDisL1(dense_points, gt)
                     dense_loss_l2 = ChamferDisL2(dense_points, gt)
-                    sparsekloss = knn_loss(coarse_points)
-                    densekloss = knn_loss(dense_points)
+
+                    sparsedcd_loss = DCD(ret[0], gt)
+                    densedcd_loss = DCD(ret[1], gt)
 
                     test_losses.update(
                         [
@@ -621,8 +596,8 @@ def test(
                             sparse_loss_l2.item() * 1000,
                             dense_loss_l1.item() * 1000,
                             dense_loss_l2.item() * 1000,
-                            sparsekloss.item() * 1000,
-                            densekloss.item() * 1000,
+                            sparsedcd_loss.item() * 1000,
+                            densedcd_loss.item() * 1000,
                         ]
                     )
 
