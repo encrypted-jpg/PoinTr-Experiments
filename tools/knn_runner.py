@@ -525,7 +525,7 @@ def test(
     base_model.eval()  # set model to eval mode
 
     test_losses = AverageMeter(
-        ["SparseLossL1", "SparseLossL2", "DenseLossL1", "DenseLossL2"]
+        ["SparseLossL1", "SparseLossL2", "DenseLossL1", "DenseLossL2", "SparseKNNLoss", "DenseKNNLoss"]
     )
     test_metrics = AverageMeter(Metrics.names())
     category_metrics = dict()
@@ -563,6 +563,8 @@ def test(
                         sparse_loss_l2.item() * 1000,
                         dense_loss_l1.item() * 1000,
                         dense_loss_l2.item() * 1000,
+                        sparsekloss.item() * 1000,
+                        densekloss.item() * 1000,
                     ]
                 )
 
@@ -601,6 +603,8 @@ def test(
                     sparse_loss_l2 = ChamferDisL2(coarse_points, gt)
                     dense_loss_l1 = ChamferDisL1(dense_points, gt)
                     dense_loss_l2 = ChamferDisL2(dense_points, gt)
+                    sparsekloss = knn_loss(coarse_points)
+                    densekloss = knn_loss(dense_points)
 
                     test_losses.update(
                         [
@@ -608,6 +612,8 @@ def test(
                             sparse_loss_l2.item() * 1000,
                             dense_loss_l1.item() * 1000,
                             dense_loss_l2.item() * 1000,
+                            sparsekloss.item() * 1000,
+                            densekloss.item() * 1000,
                         ]
                     )
 
