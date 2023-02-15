@@ -17,15 +17,22 @@ class DCD(nn.Module):
 
     def __init__(self, alpha=1000, n_lambda=1, return_raw=False, non_reg=False):
         super(DCD, self).__init__()
-        self.alpha=alpha
-        self.n_lambda=n_lambda
-        self.return_raw=return_raw
-        self.non_reg=False
-        
-    def forward(self, x, gt):
-        return self.calc_dcd(x, gt, self.alpha, self.n_lambda, self.return_raw, self.non_reg)
+        self.alpha = alpha
+        self.n_lambda = n_lambda
+        self.return_raw = return_raw
+        self.non_reg = False
 
-    def calc_dcd(x, gt, alpha=1000, n_lambda=1, return_raw=False, non_reg=False):
+    def forward(self, x, gt):
+        return self.calc_dcd(
+            x,
+            gt,
+            alpha=self.alpha,
+            n_lambda=self.n_lambda,
+            return_raw=self.return_raw,
+            non_reg=self.non_reg,
+        )
+
+    def calc_dcd(self, x, gt, alpha=1000, n_lambda=1, return_raw=False, non_reg=False):
         x = x.float()
         gt = gt.float()
         batch_size, n_x, _ = x.shape
@@ -58,23 +65,39 @@ class DCD(nn.Module):
         loss2 = (1 - exp_dist2 * weight2).mean(dim=1)
 
         loss = (loss1 + loss2) / 2
+        loss = torch.mean(loss)
 
         res = [loss, cd_p, cd_t]
         if return_raw:
             res.extend([dist1, dist2, idx1, idx2])
 
-        return res
+        return res[0]
 
-    def calc_cd(output, gt, calc_f1=False, return_raw=False, normalize=False, separate=False):
+    def calc_cd(
+        self,
+        output,
+        gt,
+        calc_f1=False,
+        return_raw=False,
+        normalize=False,
+        separate=False,
+    ):
         # cham_loss = dist_chamfer_3D.chamfer_3DDist()
         cham_loss = cd()
         dist1, dist2, idx1, idx2 = cham_loss(gt, output)
         cd_p = (torch.sqrt(dist1).mean(1) + torch.sqrt(dist2).mean(1)) / 2
-        cd_t = (dist1.mean(1) + dist2.mean(1))
+        cd_t = dist1.mean(1) + dist2.mean(1)
 
         if separate:
-            res = [torch.cat([torch.sqrt(dist1).mean(1).unsqueeze(0), torch.sqrt(dist2).mean(1).unsqueeze(0)]),
-                torch.cat([dist1.mean(1).unsqueeze(0),dist2.mean(1).unsqueeze(0)])]
+            res = [
+                torch.cat(
+                    [
+                        torch.sqrt(dist1).mean(1).unsqueeze(0),
+                        torch.sqrt(dist2).mean(1).unsqueeze(0),
+                    ]
+                ),
+                torch.cat([dist1.mean(1).unsqueeze(0), dist2.mean(1).unsqueeze(0)]),
+            ]
         else:
             res = [cd_p, cd_t]
         if calc_f1:
@@ -92,33 +115,35 @@ class DCD(nn.Module):
 #     emd_out = torch.sqrt(dist).mean(1)
 #     return emd_out
 
+
 def knn(x, k):
     inner = -2 * torch.matmul(x.transpose(2, 1).contiguous(), x)
-    xx = torch.sum(x ** 2, dim=1, keepdim=True)
+    xx = torch.sum(x**2, dim=1, keepdim=True)
     pairwise_distance = -xx - inner - xx.transpose(2, 1).contiguous()
     idx = pairwise_distance.topk(k=k, dim=-1)[1]
     return idx
+
 
 def knn_point(pk, point_input, point_output):
     m = point_output.size()[1]
     n = point_input.size()[1]
 
     inner = -2 * torch.matmul(point_output, point_input.transpose(2, 1).contiguous())
-    xx = torch.sum(point_output ** 2, dim=2, keepdim=True).repeat(1, 1, n)
-    yy = torch.sum(point_input ** 2, dim=2, keepdim=False).unsqueeze(1).repeat(1, m, 1)
+    xx = torch.sum(point_output**2, dim=2, keepdim=True).repeat(1, 1, n)
+    yy = torch.sum(point_input**2, dim=2, keepdim=False).unsqueeze(1).repeat(1, m, 1)
     pairwise_distance = -xx - inner - yy
     dist, idx = pairwise_distance.topk(k=pk, dim=-1)
     return dist, idx
+
 
 def knn_point_all(pk, point_input, point_output):
     m = point_output.size()[1]
     n = point_input.size()[1]
 
     inner = -2 * torch.matmul(point_output, point_input.transpose(2, 1).contiguous())
-    xx = torch.sum(point_output ** 2, dim=2, keepdim=True).repeat(1, 1, n)
-    yy = torch.sum(point_input ** 2, dim=2, keepdim=False).unsqueeze(1).repeat(1, m, 1)
+    xx = torch.sum(point_output**2, dim=2, keepdim=True).repeat(1, 1, n)
+    yy = torch.sum(point_input**2, dim=2, keepdim=False).unsqueeze(1).repeat(1, m, 1)
     pairwise_distance = -xx - inner - yy
     dist, idx = pairwise_distance.topk(k=pk, dim=-1)
 
     return dist, idx
-

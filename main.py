@@ -1,4 +1,4 @@
-from tools import run_net, test_net, knn_run_net, knn_test_net
+from tools import *
 from utils import parser, dist_utils, misc
 from utils.logger import *
 from utils.config import *
