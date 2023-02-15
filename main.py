@@ -66,6 +66,11 @@ def main():
             knn_test_net(args, config)
         else:
             knn_run_net(args, config, train_writer, val_writer)
+    elif args.dcd:
+        if args.test:
+            dcd_test_net(args, config)
+        else:
+            dcd_run_net(args, config, train_writer, val_writer)
     else:
         if args.test:
             test_net(args, config)

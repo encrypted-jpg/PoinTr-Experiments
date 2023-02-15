@@ -8,9 +8,6 @@ python setup.py install --user
 cd $HOME/extensions/dcd/metrics/CD/chamfer3D
 python setup.py install --user
 
-cd $HOME/extensions/dcd/metrics/CD
-python setup.py install --user
-
 # NOTE: For GRNet 
 
 # Cubic Feature Sampling
