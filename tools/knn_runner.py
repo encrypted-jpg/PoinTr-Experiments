@@ -315,7 +315,7 @@ def validate(
     category_metrics = dict()
     n_samples = len(test_dataloader)  # bs is 1
 
-    interval = n_samples // 10
+    interval = n_samples // 5
 
     with torch.no_grad():
         for idx, (taxonomy_ids, model_ids, data) in enumerate(test_dataloader):
